@@ -1,6 +1,7 @@
 package main
 
 import (
+	"./socks"
 	"flag"
 	"io"
 	"log"
@@ -26,7 +27,25 @@ func newClient(client net.Conn) {
 			log.Printf("failed to read: %v\n", err)
 		}
 
-		log.Printf("read byte: %s\n", buffer)
+		if err := socks.Negotiation(client); err != nil {
+			log.Printf("socks negotiation fail: %v\n", err)
+			return
+		}
+
+		targetAddr, err := socks.Request(client)
+		if err != nil {
+			log.Printf("socks Request fail: %v\n", err)
+			return
+		}
+
+		connection, err := net.Dial("tcp", targetAddr)
+		if err != nil {
+			log.Printf("failed to connect to target: %v", err)
+			return
+		}
+		defer connection.Close()
+
+		log.Printf("build proxy from %s to %s through %s\n", client.RemoteAddr(), targetAddr, client.LocalAddr())
 		_, err = client.Write(buffer)
 		if err != nil {
 			log.Printf("failed to send: %v\n", err)

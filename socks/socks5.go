@@ -15,16 +15,16 @@ const MaxBuffLen = 512
 
 // SOCKS request commands
 const (
-	CMD_CONNECT      = 1
-	CMD_BIND         = 2
-	CMD_UDPASSOCIATE = 3
+	CmdConnect      = 1
+	CmdBind         = 2
+	CmdUdpassociate = 3
 )
 
 // SOCKS address types
 const (
-	ATYP_IPV4 = 1
-	ATYP_DOMAIN = 3
-	ATYP_IPV6 = 4
+	AtypIpv4   = 1
+	AtypDomain = 3
+	AtypIpv6   = 4
 )
 
 //	recv:
@@ -40,7 +40,7 @@ const (
 // +----+--------+
 // | 1  |   1    |
 // +----+--------+
-func negotiation(client net.Conn) error {
+func Negotiation(client net.Conn) error {
 	buffer := make([]byte, MaxBuffLen)
 	// read VER, NMETHODS
 	if _, err := client.Read(buffer[:2]); err != nil {
@@ -74,7 +74,7 @@ func negotiation(client net.Conn) error {
 // +----+-----+-------+------+----------+----------+
 // | 1  |  1  | X'00' |  1   | Variable |    2     |
 // +----+-----+-------+------+----------+----------+
-func request(client net.Conn) (string, error)  {
+func Request(client net.Conn) (string, error)  {
 	buffer := make([]byte, MaxBuffLen)
 
 	// read VER, CMD, RSV, ATYP
@@ -86,7 +86,7 @@ func request(client net.Conn) (string, error)  {
 	var host, port string
 	atyp := buffer[3]
 	switch atyp {
-	case ATYP_IPV4:
+	case AtypIpv4:
 		if _, err := client.Read(buffer[:net.IPv4len + 2]); err != nil {
 			return "", err
 		}
@@ -94,7 +94,7 @@ func request(client net.Conn) (string, error)  {
 		host = net.IP(buffer[:net.IPv4len]).String()
 		log.Printf("ipv4 host: %v, %v\n", host, buffer[:net.IPv4len])
 		port = strconv.Itoa(int(binary.LittleEndian.Uint16(buffer[net.IPv4len: net.IPv4len + 2])))
-	case ATYP_DOMAIN:
+	case AtypDomain:
 		if _, err := client.Read(buffer[:1]); err != nil {
 			return "", err
 		}
@@ -106,7 +106,7 @@ func request(client net.Conn) (string, error)  {
 
 		host = string(buffer[:domainLen])
 		port = strconv.Itoa(int(binary.LittleEndian.Uint16(buffer[domainLen: domainLen + 2])))
-	case ATYP_IPV6:
+	case AtypIpv6:
 		if _, err := client.Read(buffer[:net.IPv6len + 2]); err != nil {
 			return "", err
 		}
@@ -120,16 +120,15 @@ func request(client net.Conn) (string, error)  {
 	}
 	log.Printf("host: %s, port: %d\n", host, port)
 
-	// respone: write VER METHOD
+	// respone: write VER, REP, RSV, ATYP, BND.ADDR, BND.PORT
 	switch cmd {
-	case CMD_CONNECT:
-		if _, err := client.Write([]byte{ProtoVer, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+	case CmdConnect:
+		if _, err := client.Write([]byte{ProtoVer, 0, 0, AtypIpv4, 0, 0, 0, 0, 0, 0}); err != nil {
 			return "", err
 		}
 	default:
 		return "", fmt.Errorf("request commands is support: %d", cmd)
 	}
-
 
 	return net.JoinHostPort(host, port), nil
 }
