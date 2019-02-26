@@ -1,17 +1,37 @@
-package main
+package server
 
 import (
-	"./socks"
-	"flag"
+	"../socks"
 	"io"
 	"log"
 	"net"
-	"net/url"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
+	"time"
 )
+
+func forward(client, connection net.Conn) (int64, int64, error) {
+	type res struct {
+		N   int64
+		Err error
+	}
+	ch := make(chan res)
+
+	go func() {
+		n, err := io.Copy(client, connection)
+		client.SetDeadline(time.Now()) // wake up the other goroutine blocking on right
+		connection.SetDeadline(time.Now())  // wake up the other goroutine blocking on left
+		ch <- res{n, err}
+	} ()
+
+	n, err := io.Copy(connection, client)
+	connection.SetDeadline(time.Now()) // wake up the other goroutine blocking on right
+	client.SetDeadline(time.Now())  // wake up the other goroutine blocking on left
+	rs := <-ch
+
+	if err == nil {
+		err = rs.Err
+	}
+	return n, rs.N, err
+}
 
 func newClient(client net.Conn) {
 	defer client.Close()
@@ -50,10 +70,18 @@ func newClient(client net.Conn) {
 		if err != nil {
 			log.Printf("failed to send: %v\n", err)
 		}
+
+		_, _, err = forward(client, connection)
+		if err != nil {
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				return // ignore i/o timeout
+			}
+			log.Printf("forward error: %v\n", err)
+		}
 	}
 }
 
-func server(addr string)  {
+func Start(addr string)  {
 	ls, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on %s: %v", addr, err)
@@ -72,39 +100,3 @@ func server(addr string)  {
 	}
 }
 
-func main() {
-	var flags struct {
-		Addr		string
-		Cipher		string
-		Key       	string
-		Password  	string
-		Socks     	string
-		TCPTun    	string
-	}
-
-	log.Println("server start...")
-
-	flag.StringVar(&flags.Addr, "addr", "", "server listen address or url")
-	flag.StringVar(&flags.Key, "key", "", "base64url-encoded key (derive from password if empty)")
-	flag.StringVar(&flags.Password, "password", "", "password")
-	flag.StringVar(&flags.Socks, "socks", "", "(client-only) SOCKS listen address")
-	flag.StringVar(&flags.TCPTun, "tcptun", "", "(client-only) TCP tunnel (laddr1=raddr1,laddr2=raddr2,...)")
-	flag.Parse()
-
-	if !strings.HasPrefix(flags.Addr, "ss://") {
-		log.Fatal("error addr " + flags.Addr)
-	}
-
-	urlInfo, err := url.Parse(flags.Addr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	go server(urlInfo.Host)
-
-	quitCH := make(chan os.Signal, 1)
-	signal.Notify(quitCH, syscall.SIGINT, syscall.SIGTERM)
-	<-quitCH
-
-	log.Println("server quit...")
-}
